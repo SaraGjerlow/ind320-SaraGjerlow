@@ -1,60 +1,64 @@
-"""Page 3: interactive plot with column and month-range selection."""
-
+"""Page 3: plot of the data, with a column selector and a month range slider."""
+ 
 import matplotlib.pyplot as plt
 import streamlit as st
-
+ 
 from modules.data import load_reservoirs
-
+ 
 st.title("Plots")
-
-reservoirs = load_reservoirs()
-
-# Build a list of months present in the data, as period labels like "1995-01".
-months = sorted(reservoirs.index.to_period("M").unique())
-month_labels = [str(m) for m in months]
-
+ 
+data = load_reservoirs()
+ 
+# Turn every row's date into a "YYYY-MM" string. month_options is the list of
+# months the slider can choose between.
+row_months = data.index.strftime("%Y-%m")
+month_options = sorted(set(row_months))
+ 
+# Drop-down menu: one single column, or all of them together.
 column_choice = st.selectbox(
     "Column",
-    options=["All columns"] + list(reservoirs.columns),
-    help="Choose a single variable or plot all of them together.",
+    options=["All columns"] + list(data.columns),
 )
-
-# select_slider returns a (start, end) tuple when given a two-element value.
-# Default is the first month only, as required by the assignment.
-start_label, end_label = st.select_slider(
+ 
+# Giving select_slider a pair of values turns it into a range slider with two
+# handles. Both start on the first month, as the assignment asks for.
+start_month, end_month = st.select_slider(
     "Month range",
-    options=month_labels,
-    value=(month_labels[0], month_labels[0]),
+    options=month_options,
+    value=(month_options[0], month_options[0]),
 )
-
-# Filter rows whose month falls inside the selected range.
-row_months = reservoirs.index.to_period("M").astype(str)
-mask = (row_months >= start_label) & (row_months <= end_label)
-subset = reservoirs.loc[mask]
-
-st.caption(f"{len(subset)} weekly observations from {start_label} to {end_label}.")
-
+ 
+# Keep the rows whose month falls inside the selected range.
+subset = data[(row_months >= start_month) & (row_months <= end_month)]
+ 
+st.caption(f"{len(subset)} weekly observations from {start_month} to {end_month}.")
+ 
 fig, ax = plt.subplots(figsize=(10, 4))
-
+ 
 if column_choice == "All columns":
-    # Columns use different units, so normalise to make the shapes comparable.
-    value_range = subset.max() - subset.min()
-    varying = subset.loc[:, value_range > 0]
-    normalised = (varying - varying.min()) / (varying.max() - varying.min())
-
-    for col in normalised.columns:
-        ax.plot(normalised.index, normalised[col], linewidth=1.2, label=col)
-
-    ax.set_ylabel("Normalised value (0-1)")
+    # The columns use different units, so each one is rescaled to 0-1 first.
+    # Capacity is constant and has no range to divide by, so it is left out.
+    columns_to_plot = [
+        "Fill level (fraction)",
+        "Stored energy (TWh)",
+        "Fill level previous week (fraction)",
+        "Change in fill level (fraction)",
+    ]
+    for column in columns_to_plot:
+        values = subset[column]
+        normalised = (values - values.min()) / (values.max() - values.min())
+        ax.plot(subset.index, normalised, linewidth=1.2, label=column)
+ 
     ax.set_title("All columns, min-max normalised")
+    ax.set_ylabel("Normalised value (0 to 1)")
     ax.legend(fontsize=8)
 else:
     ax.plot(subset.index, subset[column_choice], linewidth=1.2)
-    ax.set_ylabel(column_choice)
     ax.set_title(column_choice)
-
+    ax.set_ylabel(column_choice)
+ 
 ax.set_xlabel("Date")
 ax.grid(alpha=0.3)
 fig.autofmt_xdate()
-
+ 
 st.pyplot(fig)
