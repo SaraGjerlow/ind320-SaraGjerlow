@@ -1,57 +1,105 @@
-"""Data access for the IND320 reservoir app.
+"""Data access for the IND320 app.
  
-Part 1 reads a local CSV file. In part 2 this module will read from MongoDB
-instead, and nothing outside this file should need to change.
+Part 1 read a local CSV file. Part 2 reads the reservoir data straight from
+NVE's API and the cross-border flow data from MongoDB, which is filled by the
+Jupyter Notebook.
 """
  
-from pathlib import Path
- 
 import pandas as pd
+import requests
 import streamlit as st
+from pymongo import MongoClient
  
-# The path is built from this file's own location, so it works both on a local
-# machine and on Streamlit Cloud.
-DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "reservoirs.csv"
+NVE_DATA_URL = (
+    "https://biapi.nve.no/magasinstatistikk/api/Magasinstatistikk/HentOffentligData"
+)
+NVE_AREAS_URL = (
+    "https://biapi.nve.no/magasinstatistikk/api/Magasinstatistikk/HentOmr%C3%A5der"
+)
+ 
+# Norwegian source headers -> English, the same names used in the notebook.
+COLUMN_NAMES_EN = {
+    "dato_Id": "Date",
+    "omrType": "Area type",
+    "omrnr": "Area number",
+    "iso_aar": "ISO year",
+    "iso_uke": "ISO week",
+    "fyllingsgrad": "Fill level (fraction)",
+    "kapasitet_TWh": "Capacity (TWh)",
+    "fylling_TWh": "Stored energy (TWh)",
+    "neste_Publiseringsdato": "Next publication date",
+    "fyllingsgrad_forrige_uke": "Fill level previous week (fraction)",
+    "endring_fyllingsgrad": "Change in fill level (fraction)",
+}
+ 
+# The columns that hold measurements. The rest are identifiers or metadata.
+MEASUREMENT_COLUMNS = [
+    "Fill level (fraction)",
+    "Capacity (TWh)",
+    "Stored energy (TWh)",
+    "Fill level previous week (fraction)",
+    "Change in fill level (fraction)",
+]
+ 
+# NVE has published the statistics since 1995.
+FIRST_YEAR = 1995
  
  
 @st.cache_data
-def load_reservoirs() -> pd.DataFrame:
-    """Read the CSV file and return the national weekly series.
+def load_reservoirs(start_year: int, end_year: int) -> pd.DataFrame:
+    """Download the reservoir statistics for the chosen interval of years.
  
-    This does the same steps as the Jupyter notebook: keep the national total,
-    sort by date, keep the five measurement columns and rename them to English.
-    Caching means the file is only read once per session instead of on every
-    interaction with the app.
+    The cache key includes the interval, so changing the slider triggers a new
+    download rather than reusing the previous result. NVE's API has no date
+    parameters, so the interval is applied immediately after the request.
     """
-    df = pd.read_csv(DATA_PATH)
+    response = requests.get(NVE_DATA_URL)
+    response.raise_for_status()
  
-    # The file holds nine areas stacked on top of each other. NO is the
-    # national total and is the only area type with a single area.
-    national = df[df["omrType"] == "NO"].copy()
+    data = pd.DataFrame(response.json())
+    data = data.rename(columns=COLUMN_NAMES_EN)
  
-    # Turn the date column into real dates, then sort the rows by date.
-    national["dato_Id"] = pd.to_datetime(national["dato_Id"])
-    national = national.sort_values("dato_Id")
+    data["Date"] = pd.to_datetime(data["Date"])
+    data = data.sort_values("Date")
  
-    # Keep the date and the five measurement columns.
-    data = national[[
-        "dato_Id",
-        "fyllingsgrad",
-        "kapasitet_TWh",
-        "fylling_TWh",
-        "fyllingsgrad_forrige_uke",
-        "endring_fyllingsgrad",
-    ]]
+    # Keep the selected interval of years.
+    years = data["Date"].dt.year
+    return data[(years >= start_year) & (years <= end_year)]
  
-    # Translate the Norwegian headers to English, same names as the notebook.
-    data = data.rename(columns={
-        "dato_Id": "Date",
-        "fyllingsgrad": "Fill level (fraction)",
-        "kapasitet_TWh": "Capacity (TWh)",
-        "fylling_TWh": "Stored energy (TWh)",
-        "fyllingsgrad_forrige_uke": "Fill level previous week (fraction)",
-        "endring_fyllingsgrad": "Change in fill level (fraction)",
-    })
  
-    # Use the date as the row index, so it becomes the x-axis in the plots.
-    return data.set_index("Date")
+@st.cache_data
+def load_areas() -> pd.DataFrame:
+    """Download NVE's list of areas, used to label the area numbers."""
+    areas_raw = requests.get(NVE_AREAS_URL).json()[0]
+ 
+    rows = []
+    for group_name, group in areas_raw.items():
+        for area in group:
+            area["group"] = group_name
+            rows.append(area)
+ 
+    return pd.DataFrame(rows)
+ 
+ 
+@st.cache_resource
+def get_mongo_client() -> MongoClient:
+    """Open one MongoDB connection and reuse it across reruns.
+ 
+    The connection string is read from Streamlit's secrets, which are entered
+    on streamlit.io and never committed to GitHub.
+    """
+    return MongoClient(st.secrets["mongo"]["uri"])
+ 
+ 
+@st.cache_data(ttl=600)
+def load_flows() -> pd.DataFrame:
+    """Read the cross-border flow data written to MongoDB by the notebook."""
+    client = get_mongo_client()
+    collection = client["ind320"]["crossborder_flows"]
+ 
+    # _id is MongoDB's own key and is not needed here.
+    documents = list(collection.find({}, {"_id": 0}))
+ 
+    flows = pd.DataFrame(documents)
+    flows["timestamp"] = pd.to_datetime(flows["timestamp"])
+    return flows
