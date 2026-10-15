@@ -1,135 +1,159 @@
-"""Cross-border page: pie chart and line plot side by side, read from MongoDB."""
-
 import matplotlib.pyplot as plt
 import streamlit as st
 
 from modules.data import load_flows
 
-st.title("Cross-border power flow")
+# Readable labels instead of the raw values stored in the database.
+DIRECTION_LABELS = {
+    "export": "Out of Norway",
+    "import": "Into Norway",
+}
 
-flows = load_flows()
-
-connections = sorted(flows["connection"].unique())
-years = sorted(flows["timestamp"].dt.year.unique())
-
-# Readable labels for the two flow directions.
-DIRECTION_LABELS = {"export": "Out of Norway", "import": "Into Norway"}
-
+# Used both for the month selector and to convert a name to a month number.
 MONTH_NAMES = [
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 ]
 
-# Split the view into two columns.
+st.title("Cross-border power flow")
+st.write(
+    "Hourly cross-border flows between Norway (NO2) and four neighbouring "
+    "areas. The data was collected from ENTSO-E in the notebook for part 2 "
+    "and is read here from MongoDB."
+)
+
+# One document per hour, connection and direction.
+flows = load_flows()
+
+connection_names = sorted(flows["connection"].unique())
+years = sorted(flows["timestamp"].dt.year.unique())
+
 left, right = st.columns(2)
 
-# --- Left column: pie chart ----------------------------------------------
-
 with left:
-    st.subheader("Energy in and out of Norway")
+    st.subheader("Direction of flow")
 
-    connection = st.radio("Connection", options=connections)
+    connection = st.radio("Connection", options=connection_names)
     year = st.selectbox("Year", options=years, index=len(years) - 1)
 
+    # Keep only the rows for the selected connection and year.
     year_data = flows[
         (flows["connection"] == connection)
         & (flows["timestamp"].dt.year == year)
     ]
 
-    # The data is hourly, so each value in MW represents one MWh of energy.
-    totals = year_data.groupby("direction")["flow_mw"].sum()
-
-    if totals.empty:
-        st.info("No data for this combination.")
-    else:
-        labels = []
-        for direction in totals.index:
-            labels.append(DIRECTION_LABELS[direction])
-
-        fig, ax = plt.subplots(figsize=(5, 5))
-        ax.pie(totals, labels=labels, autopct="%1.1f%%", startangle=90)
-        ax.set_title(f"{connection}, {year}")
-        st.pyplot(fig)
-
-        st.caption(
-            f"Out of Norway: {totals.get('export', 0):,.0f} MWh. "
-            f"Into Norway: {totals.get('import', 0):,.0f} MWh."
+    # Only full calendar years are comparable, and the two year download
+    # window cuts the first and the last year short.
+    months_present = year_data["timestamp"].dt.month.nunique()
+    if months_present < 12:
+        st.warning(
+            f"{year} is incomplete in this dataset: only {months_present} of "
+            "12 months are covered."
         )
 
-# --- Right column: line plot ---------------------------------------------
+    # Every row is an hourly mean in MW, so summing the rows of one year
+    # gives the energy in MWh.
+    totals = year_data.groupby("direction")["flow_mw"].sum()
+
+    # Translate the index values to the labels defined at the top.
+    pie_labels = []
+    for direction in totals.index:
+        pie_labels.append(DIRECTION_LABELS[direction])
+
+    pie_figure, pie_axes = plt.subplots()
+    pie_axes.pie(totals.values, labels=pie_labels, autopct="%1.1f%%")
+    pie_axes.set_title(f"{connection}, {year}")
+    st.pyplot(pie_figure)
+
+    # The percentages alone hide the size of the flows, so the totals are
+    # written out below the chart.
+    caption_parts = []
+    for direction in totals.index:
+        caption_parts.append(
+            f"{DIRECTION_LABELS[direction]}: {totals[direction]:,.0f} MWh"
+        )
+    st.caption("   |   ".join(caption_parts))
 
 with right:
     st.subheader("Flow over time")
 
-    # Pills allow any set of months to be selected.
-    selected_names = st.pills(
+    selected_months = st.pills(
         "Months",
         options=MONTH_NAMES,
         selection_mode="multi",
         default=["January"],
     )
 
-    # Turn the month names back into month numbers.
-    selected_months = []
-    for name in selected_names:
-        selected_months.append(MONTH_NAMES.index(name) + 1)
+    # The pills return month names, while the data holds month numbers.
+    month_numbers = []
+    for name in selected_months:
+        month_numbers.append(MONTH_NAMES.index(name) + 1)
 
-    if not selected_months:
-        st.info("Select at least one month.")
+    subset = year_data[year_data["timestamp"].dt.month.isin(month_numbers)]
+
+    # Two different empty cases: nothing is selected, or the selected months
+    # fall outside the two year download window.
+    if len(selected_months) == 0:
+        st.info("Select at least one month to draw the plot.")
+    elif len(subset) == 0:
+        st.info("No data for the selected months.")
     else:
-        subset = flows[
-            (flows["timestamp"].dt.year == year)
-            & (flows["timestamp"].dt.month.isin(selected_months))
-        ]
+        line_figure, line_axes = plt.subplots()
 
-        fig, ax = plt.subplots(figsize=(7, 5))
+        # The same connection as on the left, so the two halves of the page
+        # describe the same cable. Two lines keep the plot readable.
+        for direction in ["export", "import"]:
+            series = subset[subset["direction"] == direction]
+            series = series.sort_values("timestamp")
 
-        # Two lines per connection: one for each direction.
-        for name in connections:
-            for direction in ["export", "import"]:
-                series = subset[
-                    (subset["connection"] == name)
-                    & (subset["direction"] == direction)
-                ].sort_values("timestamp")
+            # Resampling to a continuous hourly index leaves the unselected
+            # months as NaN, so the line breaks instead of jumping across them.
+            series = series.set_index("timestamp")["flow_mw"].resample("1h").mean()
 
-                # Resampling to a continuous hourly index leaves gaps as NaN,
-                # so the line breaks instead of jumping across unselected months.
-                series = series.set_index("timestamp")["flow_mw"].resample("1h").mean()
+            line_axes.plot(
+                series.index,
+                series.values,
+                linewidth=0.7,
+                label=DIRECTION_LABELS[direction],
+            )
 
-                ax.plot(
-                    series.index,
-                    series.values,
-                    linewidth=0.7,
-                    label=f"{name}, {direction}",
-                )
-
-        ax.set_title(f"Cross-border flow, {year}")
-        ax.set_xlabel("Time")
-        ax.set_ylabel("Flow (MW)")
-        ax.grid(alpha=0.3)
-        ax.legend(fontsize=6, ncol=2)
-        fig.autofmt_xdate()
-
-        st.pyplot(fig)
-
-# --- Documentation --------------------------------------------------------
+        line_axes.set_xlabel("Time")
+        line_axes.set_ylabel("Flow (MW)")
+        line_axes.set_title(f"{connection}, {year}")
+        line_axes.legend()
+        line_figure.autofmt_xdate()
+        st.pyplot(line_figure)
 
 with st.expander("About the data on this page"):
     st.write(
-        "Source: the ENTSO-E Transparency Platform, which publishes the "
-        "physical power flow across every border in Europe. The four "
-        "connections shown are the subsea interconnectors running from bidding "
-        "zone NO2 to Denmark, the Netherlands, Germany and Great Britain."
+        "The flows come from the ENTSO-E Transparency Platform, which "
+        "publishes the physical cross-border flows between European bidding "
+        "zones. Norway is represented here by the bidding zone NO2, which "
+        "holds all four interconnectors to other countries: Skagerrak to "
+        "Denmark (DK1), NorNed to the Netherlands (NL), NordLink to Germany "
+        "(DE-LU) and North Sea Link to Great Britain (GB)."
     )
     st.write(
-        "The data was retrieved in the Jupyter Notebook for the last two years, "
-        "resampled to hourly resolution, written to a local Cassandra database "
-        "through Spark, read back out with Spark SQL and inserted into MongoDB. "
-        "This page reads the MongoDB collection, since the Cassandra instance "
-        "runs only on the development machine."
+        "The two most recent years were downloaded in the notebook, written "
+        "to a local Cassandra database with Spark, read back out with Spark "
+        "SQL and finally inserted into MongoDB. This app reads the documents "
+        "from MongoDB, so the pipeline built in the notebook is what feeds "
+        "the charts on this page."
     )
     st.write(
-        "Flow has a direction: one query gives power leaving Norway and the "
-        "opposite query gives power entering it, which is what the two slices "
-        "of the pie chart show. Both plots use the year selected on the left."
+        "ENTSO-E reports each direction as its own time series, so every "
+        "connection has one series out of Norway and one into Norway. The "
+        "values are hourly averages in MW. Because the download window is "
+        "the last two years rather than whole calendar years, the first and "
+        "the last year in the selector cover only part of the year."
     )
