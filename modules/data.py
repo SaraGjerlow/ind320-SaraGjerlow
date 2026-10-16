@@ -71,14 +71,27 @@ def load_reservoirs(start_year: int, end_year: int) -> pd.DataFrame:
 def load_areas() -> pd.DataFrame:
     """Download NVE's list of areas, used to label the area numbers."""
     areas_raw = requests.get(NVE_AREAS_URL).json()[0]
- 
+
     rows = []
     for group_name, group in areas_raw.items():
         for area in group:
             area["group"] = group_name
             rows.append(area)
- 
-    return pd.DataFrame(rows)
+
+    areas = pd.DataFrame(rows)
+
+    # The area endpoint uses Norwegian field names, so they are translated
+    # the same way the measurement columns are.
+    areas = areas.rename(columns={
+        "navn": "Name",
+        "navn_langt": "Long name",
+        "beskrivelse": "Description",
+        "omrType": "Area type",
+        "omrnr": "Area number",
+        "group": "Group",
+    })
+
+    return areas
  
  
 @st.cache_resource

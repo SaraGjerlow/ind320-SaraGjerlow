@@ -113,7 +113,10 @@ with st.expander("About the data on this page"):
         "shown in the raw data below."
     )
  
-    st.write("Areas defined by the API:")
+    st.write(
+        "Areas defined by the API. The column names are translated, but the "
+        "names and descriptions are quoted from NVE and stay in Norwegian."
+    )
     st.dataframe(load_areas(), use_container_width=True)
  
     st.write("Raw downloaded data, all columns:")
