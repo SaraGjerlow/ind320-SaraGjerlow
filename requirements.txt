@@ -3,3 +3,6 @@ pandas
 matplotlib
 requests
 pymongo
+scipy
+statsmodels
+scikit-learn
