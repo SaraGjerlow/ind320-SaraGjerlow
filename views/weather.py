@@ -5,6 +5,19 @@ import streamlit as st
 
 from modules.analysis import precipitation_outliers, temperature_anomalies
 from modules.data import download_area_weather, load_area_points, load_area_weather
+from modules.theme import page_colours
+
+@st.cache_data(ttl=3600, show_spinner="Finding outliers")
+def run_spc(weather, cutoff, n_sigma, column, colour):
+    """Cache one SPC run, so changing a slider back is instant."""
+    return precipitation_outliers(weather, cutoff, n_sigma, column, colour)
+
+
+@st.cache_data(ttl=3600, show_spinner="Looking for anomalies")
+def run_lof(weather, proportion, n_neighbors, column, colour):
+    """Cache one LOF run. This is the slowest analysis in the app."""
+    return temperature_anomalies(weather, proportion, n_neighbors, column,
+                                 colour)
 
 st.title("Weather quality")
 
@@ -13,6 +26,18 @@ st.title("Weather quality")
 # were sampled inside exactly these areas.
 area_type = st.session_state["area_type"]
 area_number = st.session_state["area_number"]
+
+# The colour of this page, passed to both plots below.
+PAGE = page_colours("Outliers and anomalies")[0]
+
+# The five downloaded variables, with names that read better in a selector.
+WEATHER_VARIABLES = {
+    "Precipitation (mm)": "precipitation",
+    "Temperature (degrees C)": "temperature_2m",
+    "Snowfall (cm)": "snowfall",
+    "Relative humidity (percent)": "relative_humidity_2m",
+    "Wind speed (m/s)": "wind_speed_10m",
+}
 
 st.write(
     f"Hourly weather for **{area_type} {area_number}**, averaged over random "
@@ -107,7 +132,7 @@ st.caption(
     f"{len(weather)} hours, from {first_hour:%Y-%m-%d} to {last_hour:%Y-%m-%d}."
 )
 
-spc_tab, lof_tab = st.tabs(["Outliers in precipitation", "Anomalies in temperature"])
+spc_tab, lof_tab = st.tabs(["Outliers (SPC)", "Anomalies (LOF)"])
 
 # --- SPC ------------------------------------------------------------------
 
@@ -119,9 +144,17 @@ with spc_tab:
         "straight lines."
     )
 
-    left, right = st.columns(2)
+    left, middle, right = st.columns(3)
 
     with left:
+        spc_name = st.selectbox(
+            "Weather variable",
+            options=list(WEATHER_VARIABLES),
+            key="spc_variable",
+            help="The same method is used for every variable.",
+        )
+
+    with middle:
         cutoff = st.slider(
             "Seasonal cutoff",
             min_value=2, max_value=60, value=25, step=1,
@@ -137,11 +170,13 @@ with spc_tab:
             "counts as an outlier.",
         )
 
-    figure, outliers, statistics = precipitation_outliers(
-        weather, cutoff=cutoff, n_sigma=n_sigma
+    spc_column = WEATHER_VARIABLES[spc_name]
+
+    figure, outliers, statistics = run_spc(
+        weather, cutoff, n_sigma, spc_column, PAGE
     )
 
-    st.pyplot(figure)
+    st.plotly_chart(figure, width="stretch")
 
     one, two, three = st.columns(3)
     one.metric("Outliers", statistics["outliers"])
@@ -149,17 +184,19 @@ with spc_tab:
     three.metric("Robust standard deviation",
                  f"{statistics['robust_sigma']:.4f}")
 
-    st.write("The ten wettest outliers:")
+    st.write("The ten largest outliers:")
     st.dataframe(
-        outliers.nlargest(10, "precipitation"),
-        use_container_width=True, hide_index=True,
+        outliers.nlargest(10, spc_column),
+        width="stretch", hide_index=True,
     )
 
-    st.caption(
-        "The limits are symmetric around the seasonal level, so the lower one "
-        "ends up below zero. Precipitation cannot be negative, so in practice "
-        "only the upper limit ever flags anything."
-    )
+    # Three of the variables cannot go below zero, so half the band is unused.
+    if spc_column in ("precipitation", "snowfall", "wind_speed_10m"):
+        st.caption(
+            "The limits are symmetric around the seasonal level, so the lower "
+            "one ends up below zero. This variable cannot be negative, so in "
+            "practice only the upper limit ever flags anything."
+        )
 
 # --- LOF ------------------------------------------------------------------
 
@@ -167,13 +204,22 @@ with lof_tab:
     st.write(
         "Local Outlier Factor compares how tightly packed each point is "
         "against its neighbours in time. It finds hours that break away from "
-        "the hours around them, rather than the hottest or coldest hours of "
+        "the hours around them, rather than the highest or lowest hours of "
         "the year."
     )
 
-    left, right = st.columns(2)
+    left, middle, right = st.columns(3)
 
     with left:
+        lof_name = st.selectbox(
+            "Weather variable",
+            options=list(WEATHER_VARIABLES),
+            index=1,
+            key="lof_variable",
+            help="The same method is used for every variable.",
+        )
+
+    with middle:
         proportion = st.slider(
             "Share flagged",
             min_value=0.001, max_value=0.05, value=0.01, step=0.001,
@@ -190,21 +236,23 @@ with lof_tab:
             "small number reacts to shorter events.",
         )
 
-    figure, anomalies, statistics = temperature_anomalies(
-        weather, proportion=proportion, n_neighbors=n_neighbors
+    lof_column = WEATHER_VARIABLES[lof_name]
+
+    figure, anomalies, statistics = run_lof(
+        weather, proportion, n_neighbors, lof_column, PAGE
     )
 
-    st.pyplot(figure)
+    st.plotly_chart(figure, width="stretch")
 
     one, two, three = st.columns(3)
     one.metric("Anomalies", statistics["anomalies"])
-    two.metric("Coldest flagged", f"{statistics['coldest']:.1f} °C")
-    three.metric("Warmest flagged", f"{statistics['warmest']:.1f} °C")
+    two.metric("Lowest flagged", f"{statistics['coldest']:.1f}")
+    three.metric("Highest flagged", f"{statistics['warmest']:.1f}")
 
     st.write("The ten most isolated points:")
     st.dataframe(
         anomalies.nlargest(10, "lof_score"),
-        use_container_width=True, hide_index=True,
+        width="stretch", hide_index=True,
     )
 
 # --- Documentation --------------------------------------------------------
@@ -225,4 +273,4 @@ with st.expander("About the data on this page"):
         "yet, so it does not need a page of its own."
     )
     st.write("The stored weather for this area:")
-    st.dataframe(weather.head(200), use_container_width=True)
+    st.dataframe(weather.head(200), width="stretch")

@@ -1,7 +1,11 @@
-import matplotlib.pyplot as plt
+"""Power exchange page: direction of flow and flow over time, side by side."""
+
+import plotly.graph_objects as go
 import streamlit as st
 
+from modules.theme import PALETTE, page_colours
 from modules.data import load_flows
+from modules.theme import page_colours
 
 # Readable labels instead of the raw values stored in the database.
 DIRECTION_LABELS = {
@@ -31,6 +35,9 @@ st.write(
     "areas. The data was collected from ENTSO-E in the notebook for part 2 "
     "and is read here from MongoDB."
 )
+
+# One pastel colour per direction, used in both charts on this page.
+DIRECTION_COLOURS = {"export": PALETTE[1], "import": PALETTE[0]}
 
 # One document per hour, connection and direction.
 flows = load_flows()
@@ -67,13 +74,27 @@ with left:
 
     # Translate the index values to the labels defined at the top.
     pie_labels = []
+    pie_colours = []
     for direction in totals.index:
         pie_labels.append(DIRECTION_LABELS[direction])
+        pie_colours.append(DIRECTION_COLOURS[direction])
 
-    pie_figure, pie_axes = plt.subplots()
-    pie_axes.pie(totals.values, labels=pie_labels, autopct="%1.1f%%")
-    pie_axes.set_title(f"{connection}, {year}")
-    st.pyplot(pie_figure)
+    pie_figure = go.Figure(go.Pie(
+        labels=pie_labels,
+        values=totals.values,
+        marker=dict(colors=pie_colours),
+        textinfo="label+percent",
+        hovertemplate="%{label}<br>%{value:,.0f} MWh<extra></extra>",
+    ))
+
+    pie_figure.update_layout(
+        title=f"{connection}, {year}",
+        height=380,
+        showlegend=False,
+        margin=dict(l=10, r=10, t=60, b=10),
+    )
+
+    st.plotly_chart(pie_figure, width="stretch")
 
     # The percentages alone hide the size of the flows, so the totals are
     # written out below the chart.
@@ -108,7 +129,7 @@ with right:
     elif len(subset) == 0:
         st.info("No data for the selected months.")
     else:
-        line_figure, line_axes = plt.subplots()
+        line_figure = go.Figure()
 
         # The same connection as on the left, so the two halves of the page
         # describe the same cable. Two lines keep the plot readable.
@@ -120,19 +141,26 @@ with right:
             # months as NaN, so the line breaks instead of jumping across them.
             series = series.set_index("timestamp")["flow_mw"].resample("1h").mean()
 
-            line_axes.plot(
-                series.index,
-                series.values,
-                linewidth=0.7,
-                label=DIRECTION_LABELS[direction],
-            )
+            line_figure.add_trace(go.Scatter(
+                x=series.index,
+                y=series.values,
+                name=DIRECTION_LABELS[direction],
+                line=dict(color=DIRECTION_COLOURS[direction], width=0.9),
+                connectgaps=False,
+                hovertemplate="%{x|%d %b %H:%M}<br>%{y:,.0f} MW<extra>"
+                              + DIRECTION_LABELS[direction] + "</extra>",
+            ))
 
-        line_axes.set_xlabel("Time")
-        line_axes.set_ylabel("Flow (MW)")
-        line_axes.set_title(f"{connection}, {year}")
-        line_axes.legend()
-        line_figure.autofmt_xdate()
-        st.pyplot(line_figure)
+        line_figure.update_layout(
+            title=f"{connection}, {year}",
+            xaxis_title="Time",
+            yaxis_title="Flow (MW)",
+            height=380,
+            margin=dict(l=60, r=20, t=60, b=50),
+            legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0),
+        )
+
+        st.plotly_chart(line_figure, width="stretch")
 
 with st.expander("About the data on this page"):
     st.write(

@@ -1,10 +1,12 @@
 """Reservoir levels page: table and plots for the area chosen in the sidebar."""
 
-import matplotlib.pyplot as plt
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
+from plotly.subplots import make_subplots
 
 from modules.data import MEASUREMENT_COLUMNS, load_areas, load_reservoirs
+from modules.theme import PALETTE, page_colours
 
 st.title("Reservoir levels")
 
@@ -27,6 +29,16 @@ st.caption(
     f"covering {len(area_numbers)} area(s) of type {area_type}. "
     f"{area_type} {area_number} is drawn thicker."
 )
+
+# The colour of this page, used for the small charts in the table.
+DEEP = page_colours("Overview")[0]
+
+# One colour per area, so an area keeps the same colour in every chart.
+colours = {}
+position = 0
+for number in area_numbers:
+    colours[number] = PALETTE[position % len(PALETTE)]
+    position += 1
 
 # --- Table ----------------------------------------------------------------
 
@@ -54,9 +66,9 @@ table = pd.DataFrame(rows).set_index("Area")
 # Every measurement column is displayed as a small line chart.
 column_config = {}
 for column in MEASUREMENT_COLUMNS:
-    column_config[column] = st.column_config.LineChartColumn(column)
+    column_config[column] = st.column_config.LineChartColumn(column, color=DEEP)
 
-st.dataframe(table, column_config=column_config, use_container_width=True)
+st.dataframe(table, column_config=column_config, width="stretch")
 
 # --- Plot -----------------------------------------------------------------
 
@@ -77,21 +89,15 @@ if column_choice == ALL_COLUMNS:
 else:
     columns_to_plot = [column_choice]
 
-figure, axes = plt.subplots(
-    len(columns_to_plot),
-    1,
-    figsize=(11, 3.2 * len(columns_to_plot)),
-    sharex=True,
-    squeeze=False,
+figure = make_subplots(
+    rows=len(columns_to_plot),
+    cols=1,
+    shared_xaxes=True,
+    vertical_spacing=0.04,
 )
 
-# squeeze=False always gives a grid, so the first column of it is the list of
-# axes. That way the loop below works for one column and for five.
-axes = axes[:, 0]
-
-for position, column in enumerate(columns_to_plot):
-    one_axis = axes[position]
-
+position = 1
+for column in columns_to_plot:
     # One line per area number, so the areas of the chosen type can be
     # compared against each other.
     for number in area_numbers:
@@ -100,30 +106,40 @@ for position, column in enumerate(columns_to_plot):
         # The area chosen in the sidebar is drawn thicker, so it can be
         # followed from page to page.
         if number == area_number:
-            width = 2.2
+            width = 2.6
         else:
-            width = 0.9
+            width = 1.0
 
-        one_axis.plot(
-            area_rows["Date"],
-            area_rows[column],
-            linewidth=width,
-            label=f"{area_type} {number}",
+        name = f"{area_type} {number}"
+
+        figure.add_trace(
+            go.Scatter(
+                x=area_rows["Date"],
+                y=area_rows[column],
+                name=name,
+                legendgroup=name,
+                line=dict(color=colours[number], width=width),
+                # The same areas are in every chart, so one legend is enough.
+                showlegend=position == 1,
+                hovertemplate="%{x|%d %b %Y}<br>%{y:.2f}<extra>" + name + "</extra>",
+            ),
+            row=position,
+            col=1,
         )
 
-    one_axis.set_ylabel(column, fontsize=8)
-    one_axis.grid(alpha=0.3)
+    figure.update_yaxes(title_text=column, title_font_size=11, row=position, col=1)
+    position += 1
 
-    # One legend is enough when the same areas are drawn in every chart.
-    if position == 0:
-        one_axis.legend(fontsize=8)
+figure.update_xaxes(title_text="Date", row=len(columns_to_plot), col=1)
 
-axes[0].set_title(f"{column_choice}, area type {area_type}")
-axes[-1].set_xlabel("Date")
-figure.autofmt_xdate()
-figure.tight_layout()
+figure.update_layout(
+    title=f"{column_choice}, area type {area_type}",
+    height=300 * len(columns_to_plot),
+    hovermode="x unified",
+    margin=dict(l=70, r=20, t=60, b=50),
+)
 
-st.pyplot(figure)
+st.plotly_chart(figure, width="stretch")
 
 # --- Documentation --------------------------------------------------------
 
@@ -145,7 +161,7 @@ with st.expander("About the data on this page"):
         "Areas defined by the API. The column names are translated, but the "
         "names and descriptions are quoted from NVE and stay in Norwegian."
     )
-    st.dataframe(load_areas(), use_container_width=True)
+    st.dataframe(load_areas(), width="stretch")
 
     st.write("Raw downloaded data, all columns:")
-    st.dataframe(data.head(200), use_container_width=True)
+    st.dataframe(data.head(200), width="stretch")

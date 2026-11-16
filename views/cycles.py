@@ -1,6 +1,7 @@
 """Reservoir cycles page: STL decomposition and spectrogram in two tabs."""
 
 import streamlit as st
+from modules.theme import page_colours
 
 from modules.analysis import (
     WEEKS_PER_YEAR,
@@ -10,7 +11,22 @@ from modules.analysis import (
 )
 from modules.data import load_reservoirs
 
+@st.cache_data(ttl=3600, show_spinner="Splitting the series")
+def run_stl(series, seasonal_smoother, trend_smoother, robust, colour):
+    """Cache one STL run, so moving a slider back and forth is instant."""
+    return reservoir_cycles(series, seasonal_smoother, trend_smoother,
+                            robust)
+
+
+@st.cache_data(ttl=3600, show_spinner="Computing the spectrogram")
+def run_spectrogram(series, window_weeks, overlap_weeks, colour):
+    """Cache one spectrogram run."""
+    return reservoir_spectrogram(series, window_weeks, overlap_weeks, colour)
+
 st.title("Reservoir cycles")
+
+# The colour of this page, passed to both plots below.
+PAGE = page_colours("Cycles")[0]
 
 # The area and the interval come from the sidebar, so this page and the
 # weather page always describe the same place.
@@ -81,14 +97,11 @@ with stl_tab:
             "does not bend the trend around itself.",
         )
 
-    figure, parts, statistics = reservoir_cycles(
-        series,
-        seasonal_smoother=seasonal_smoother,
-        trend_smoother=trend_smoother,
-        robust=robust,
+    figure, parts, statistics = run_stl(
+        series, seasonal_smoother, trend_smoother, robust, PAGE
     )
 
-    st.pyplot(figure)
+    st.plotly_chart(figure, width="stretch")
 
     first, second, third = st.columns(3)
     first.metric("Seasonal share of variance",
@@ -99,7 +112,7 @@ with stl_tab:
                  f"{statistics['remainder_sd']:.4f}")
 
     with st.expander("The three parts as numbers"):
-        st.dataframe(parts, use_container_width=True)
+        st.dataframe(parts, width="stretch")
 
 # --- Spectrogram ----------------------------------------------------------
 
@@ -133,13 +146,11 @@ with spectrogram_tab:
             "a smoother picture but no new information.",
         )
 
-    figure, summary, statistics = reservoir_spectrogram(
-        series,
-        window_weeks=window_weeks,
-        overlap_weeks=overlap_weeks,
+    figure, summary, statistics = run_spectrogram(
+        series, window_weeks, overlap_weeks, PAGE
     )
 
-    st.pyplot(figure)
+    st.plotly_chart(figure, width="stretch")
 
     first, second = st.columns(2)
     first.metric("Windows", statistics["windows"])
@@ -150,7 +161,7 @@ with spectrogram_tab:
     )
 
     st.write("The strongest cycle in each window:")
-    st.dataframe(summary, use_container_width=True, hide_index=True)
+    st.dataframe(summary, width="stretch", hide_index=True)
 
 # --- Documentation --------------------------------------------------------
 

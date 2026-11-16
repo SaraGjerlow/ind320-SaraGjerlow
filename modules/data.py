@@ -1,17 +1,37 @@
 """Data access for the IND320 app.
 
-Part 1 read a local CSV file. Part 2 reads the reservoir data straight from
-NVE's API and the cross-border flow data from MongoDB, which is filled by the
-Jupyter Notebook. Part 3 adds the sampled coordinates and the weather that
-belongs to each area, both stored in MongoDB as well.
+The reservoir data comes straight from NVE's API. The cross-border flows, the
+sampled coordinates and the weather come from MongoDB, which the notebooks
+fill. The currency rates come from Norges Bank, and the area borders from the
+GeoJSON files the part 4 notebook writes.
 """
 
+import json
 import time
+from io import StringIO
+from pathlib import Path
 
 import pandas as pd
 import requests
 import streamlit as st
 from pymongo import MongoClient
+from pymongo.errors import PyMongoError
+
+class DataSourceError(Exception):
+    """Raised when one of the outside sources cannot be reached."""
+
+
+def fetch_json(url, source):
+    """Ask one of the web APIs for JSON, with a readable error if it fails."""
+    try:
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as error:
+        raise DataSourceError(f"{source} could not be reached. {error}")
+    except ValueError as error:
+        raise DataSourceError(f"{source} answered with something that is "
+                              f"not data. {error}")
 
 NVE_DATA_URL = (
     "https://biapi.nve.no/magasinstatistikk/api/Magasinstatistikk/HentOffentligData"
@@ -61,7 +81,7 @@ HOURLY_VARIABLES = [
 LOCATIONS_PER_REQUEST = 25
 
 
-@st.cache_data
+@st.cache_data(show_spinner="Downloading the reservoir statistics")
 def load_reservoirs(start_year: int, end_year: int) -> pd.DataFrame:
     """Download the reservoir statistics for the chosen interval of years.
 
@@ -69,10 +89,7 @@ def load_reservoirs(start_year: int, end_year: int) -> pd.DataFrame:
     download rather than reusing the previous result. NVE's API has no date
     parameters, so the interval is applied immediately after the request.
     """
-    response = requests.get(NVE_DATA_URL)
-    response.raise_for_status()
-
-    data = pd.DataFrame(response.json())
+    data = pd.DataFrame(fetch_json(NVE_DATA_URL, "NVE Magasinstatistikk"))
     data = data.rename(columns=COLUMN_NAMES_EN)
 
     data["Date"] = pd.to_datetime(data["Date"])
@@ -83,10 +100,10 @@ def load_reservoirs(start_year: int, end_year: int) -> pd.DataFrame:
     return data[(years >= start_year) & (years <= end_year)]
 
 
-@st.cache_data
+@st.cache_data(show_spinner="Downloading the list of areas")
 def load_areas() -> pd.DataFrame:
     """Download NVE's list of areas, used to label the area numbers."""
-    areas_raw = requests.get(NVE_AREAS_URL).json()[0]
+    areas_raw = fetch_json(NVE_AREAS_URL, "NVE's list of areas")[0]
 
     rows = []
     for group_name, group in areas_raw.items():
@@ -117,17 +134,39 @@ def get_mongo_client() -> MongoClient:
     The connection string is read from Streamlit's secrets, which are entered
     on streamlit.io and never committed to GitHub.
     """
-    return MongoClient(st.secrets["mongo"]["uri"])
+    if "mongo" not in st.secrets:
+        raise DataSourceError(
+            "No MongoDB connection string was found in the app secrets."
+        )
+
+    client = MongoClient(st.secrets["mongo"]["uri"],
+                         serverSelectionTimeoutMS=8000)
+
+    # A ping here, so a dead connection is caught before a page uses it.
+    try:
+        client.admin.command("ping")
+    except PyMongoError as error:
+        raise DataSourceError(f"MongoDB could not be reached. {error}")
+
+    return client
+
+def fetch_documents(collection_name, query, fields):
+    """Read documents from one MongoDB collection, with a readable error."""
+    client = get_mongo_client()
+    collection = client["ind320"][collection_name]
+
+    try:
+        return list(collection.find(query, fields))
+    except PyMongoError as error:
+        raise DataSourceError(f"MongoDB could not be read. {error}")
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner="Reading the power flows")
 def load_flows() -> pd.DataFrame:
     """Read the cross-border flow data written to MongoDB by the notebook."""
-    client = get_mongo_client()
-    collection = client["ind320"]["crossborder_flows"]
 
     # _id is MongoDB's own key and is not needed here.
-    documents = list(collection.find({}, {"_id": 0}))
+    documents = fetch_documents("crossborder_flows", {}, {"_id": 0})
 
     flows = pd.DataFrame(documents)
     flows["timestamp"] = pd.to_datetime(flows["timestamp"])
@@ -137,38 +176,36 @@ def load_flows() -> pd.DataFrame:
 # --- Part 3: sampled coordinates and the weather for each area ------------
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner="Reading the sampled locations")
 def load_area_points(area_type: str, area_number: int) -> pd.DataFrame:
     """Read the coordinates the notebook sampled inside one area.
 
     The points were drawn from NVE's shapefiles in the notebook and stored in
     MongoDB, so the app never has to read a shapefile or install geopandas.
     """
-    client = get_mongo_client()
-    collection = client["ind320"]["area_points"]
 
-    documents = collection.find(
+    documents = fetch_documents(
+        "area_points",
         {"area_type": area_type, "area_number": int(area_number)},
         {"_id": 0, "latitude": 1, "longitude": 1},
     )
 
-    return pd.DataFrame(list(documents))
+    return pd.DataFrame(documents)
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner="Reading the stored weather")
 def load_area_weather(area_type: str, area_number: int) -> pd.DataFrame:
     """Read the stored weather for one area, averaged over its locations.
 
     Returns an empty table if the area has not been downloaded yet. The page
     then offers to download it.
     """
-    client = get_mongo_client()
-    collection = client["ind320"]["area_weather"]
 
-    documents = list(collection.find(
+    documents = fetch_documents(
+        "area_weather",
         {"area_type": area_type, "area_number": int(area_number)},
         {"_id": 0, "area_type": 0, "area_number": 0},
-    ))
+    )
 
     if len(documents) == 0:
         return pd.DataFrame()
@@ -290,3 +327,143 @@ def store_area_weather(area_type, area_number, weather):
 
     # The stored weather has changed, so the cached read has to go.
     load_area_weather.clear()
+
+# --- Part 4: borders, currency, long weather history and the weekly table ---
+
+# The GeoJSON files the part 4 notebook writes, next to this module's folder.
+GEOJSON_DIR = Path(__file__).resolve().parent.parent / "geojson"
+
+NB_URL = "https://data.norges-bank.no/api/data/EXR"
+
+# How each weather column is turned from days into weeks.
+WEEKLY_WEATHER = {
+    "temperature_2m_mean": "mean",
+    "precipitation_sum": "sum",
+    "snowfall_sum": "sum",
+}
+
+# The names shown in the menus, pointing at the columns in the weekly table.
+WEATHER_COLUMNS = {
+    "Temperature": "temperature_2m_mean",
+    "Precipitation": "precipitation_sum",
+    "Snowfall": "snowfall_sum",
+}
+
+RESERVOIR_COLUMNS = {
+    "Fill level": "fill_level",
+    "Weekly change in fill level": "fill_change",
+}
+
+
+@st.cache_data(show_spinner="Reading the area borders")
+def load_geojson(area_type: str) -> dict:
+    """Read the borders of one area type, written by the part 4 notebook."""
+    path = GEOJSON_DIR / f"{area_type}.geojson"
+    with open(path, encoding="utf-8") as file:
+        return json.load(file)
+
+
+@st.cache_data(ttl=3600, show_spinner="Downloading the reservoir statistics")
+def load_all_reservoirs() -> pd.DataFrame:
+    """The whole reservoir series, with the area written as for example EL 3."""
+    data = pd.DataFrame(fetch_json(NVE_DATA_URL, "NVE Magasinstatistikk"))
+    data = data.rename(columns=COLUMN_NAMES_EN)
+
+    data["Date"] = pd.to_datetime(data["Date"])
+    data["area"] = data["Area type"] + " " + data["Area number"].astype(str)
+
+    return data.sort_values("Date")
+
+
+@st.cache_data(ttl=3600, show_spinner="Reading the daily weather")
+def load_daily_weather(area_type: str, area_number: int) -> pd.DataFrame:
+    """Read the long daily weather history the part 4 notebook stored."""
+ 
+    documents = fetch_documents(
+        "area_weather_daily",
+        {"area_type": area_type, "area_number": int(area_number)},
+        {"_id": 0, "area_type": 0, "area_number": 0},
+    )
+
+    if len(documents) == 0:
+        return pd.DataFrame()
+
+    weather = pd.DataFrame(documents)
+    weather["time"] = pd.to_datetime(weather["time"])
+    return weather.sort_values("time").reset_index(drop=True)
+
+
+@st.cache_data(ttl=3600, show_spinner="Downloading the currency rates")
+def load_currency(start_date: str, end_date: str,
+                  currencies=("EUR", "USD")) -> pd.DataFrame:
+    """Daily EUR and USD rates against NOK from Norges Bank."""
+    # Frequency, base currency, quote currency, tenor.
+    key = f"B.{'+'.join(currencies)}.NOK.SP"
+
+    try:
+        response = requests.get(
+            f"{NB_URL}/{key}",
+            params={
+                "startPeriod": start_date,
+                "endPeriod": end_date,
+                "format": "csv",
+                "locale": "en",
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+    except requests.RequestException as error:
+        raise DataSourceError(f"Norges Bank could not be reached. {error}")
+
+    # Norges Bank separates the columns with semicolons, not commas.
+    data = pd.read_csv(StringIO(response.text), sep=";")
+    data["TIME_PERIOD"] = pd.to_datetime(data["TIME_PERIOD"])
+
+    rates = data.pivot(index="TIME_PERIOD", columns="BASE_CUR",
+                       values="OBS_VALUE")
+    rates.index.name = "date"
+    rates.columns.name = None
+
+    return rates
+
+
+@st.cache_data(ttl=3600, show_spinner="Building the weekly table")
+def load_weekly_frame(area: str) -> pd.DataFrame:
+    """Reservoir, weather and currency on one weekly index for one area.
+
+    The same table the part 4 notebook builds, so the forecast and the
+    correlation page work on exactly the same numbers as the notebook.
+    """
+    area_type, area_number = area.split()
+
+    reservoirs = load_all_reservoirs()
+    area_rows = reservoirs[reservoirs["area"] == area].sort_values("Date")
+
+    fill = area_rows.set_index("Date")["Fill level (fraction)"] * 100
+    fill = fill[~fill.index.duplicated(keep="first")]
+
+    frame = pd.DataFrame(index=fill.index)
+    frame["fill_level"] = fill
+
+    daily = load_daily_weather(area_type, int(area_number))
+
+    if len(daily) > 0:
+        # W-SUN labels each week by the Sunday it ends on, just like NVE does.
+        weather = daily.set_index("time").resample("W-SUN").agg(WEEKLY_WEATHER)
+        for column in weather.columns:
+            frame[column] = weather[column]
+
+        # Snow takes about twenty weeks to turn into meltwater.
+        frame["snow_lagged"] = frame["snowfall_sum"].shift(20)
+
+    rates = load_currency("1999-01-01", str(pd.Timestamp.today().date()))
+
+    # Weekends are missing from the rates, so they are carried forward first.
+    currency = rates.resample("D").ffill().resample("W-SUN").mean()
+    for column in currency.columns:
+        frame[column] = currency[column]
+
+    # Rain adds water, so it affects the change in filling, not the level.
+    frame["fill_change"] = frame["fill_level"].diff()
+
+    return frame

@@ -1,0 +1,10 @@
+# The app's colours. Everything else picks these up, and the Plotly template
+# in modules/theme.py uses the same values so the plots match the page.
+
+[theme]
+base = "light"
+primaryColor = "#C9709C"
+backgroundColor = "#FDFBFC"
+secondaryBackgroundColor = "#F2F1F5"
+textColor = "#2E2A3B"
+font = "sans serif"

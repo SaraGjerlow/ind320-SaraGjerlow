@@ -1,108 +1,135 @@
-"""IND320 project app. Entry point: defines the pages, the sidebar and navigation."""
+"""IND320 project app. Defines the theme, the shared choices and the pages."""
 
-import pandas as pd
+from datetime import date
+
 import streamlit as st
 
 from modules.data import FIRST_YEAR
+from modules.theme import page_style, use_theme
+from modules.data import DataSourceError
 
-# Must run before any other Streamlit content in the app.
 st.set_page_config(
-    page_title="IND320 Reservoirs",
+    page_title="IND320 Hydropower",
     page_icon="💧",
     layout="wide",
 )
 
-# NVE's own numbering. NO is the country as one area, EL are the five
-# electricity price areas and VASS are the three watercourse areas.
+# Gives every Plotly figure in the app the same colours as the page.
+use_theme()
+
+# NVE's own numbering. NO is the country as one area, EL the five price areas
+# and VASS the three watercourse areas.
 AREA_NUMBERS = {
     "NO": [0],
     "EL": [1, 2, 3, 4, 5],
     "VASS": [1, 2, 3],
 }
 
-# --- Global area selector -------------------------------------------------
+THIS_YEAR = date.today().year
 
-# This block is written before nav.run(), so it appears in the sidebar on
-# every page. The area is a global setting because the reservoir pages and
-# the weather pages have to describe the same place. Choosing it separately
-# on each page would let them drift apart without the user noticing.
+# --- The shared choices --------------------------------------------------
+
+# The area and the period live in session_state, so every page reads the same
+# values. The area can also be changed by clicking the map on the Home page.
+
+if "area_type" not in st.session_state:
+    st.session_state["area_type"] = "EL"
+
+if "area_number" not in st.session_state:
+    st.session_state["area_number"] = 3
+
+# A click in the map leaves the area name here, and it is used before the
+# sidebar is drawn. Streamlit does not allow changing a widget after it exists.
+if "clicked_area" in st.session_state:
+    clicked_type, clicked_number = st.session_state.pop("clicked_area").split()
+    st.session_state["area_type"] = clicked_type
+    st.session_state["area_number"] = int(clicked_number)
 
 with st.sidebar:
     st.subheader("Area")
 
-    # EL 3 is the default because that is the area the notebook downloaded
-    # weather for, so every page has something to show on the first visit.
     area_type = st.radio(
         "Area type",
         options=list(AREA_NUMBERS),
-        index=1,
         horizontal=True,
-        help="NO is the country as a whole, EL are the electricity price "
-        "areas, VASS are the watercourse areas.",
+        key="area_type",
+        help="NO is the whole country, EL the price areas, VASS the "
+             "watercourse areas.",
     )
 
+    # A number from the old type may not exist in the new one, so it is reset
+    # before the selectbox is drawn.
     numbers = AREA_NUMBERS[area_type]
+    if st.session_state["area_number"] not in numbers:
+        st.session_state["area_number"] = numbers[0]
 
-    if area_type == "EL":
-        default_number = numbers.index(3)
-    else:
-        default_number = 0
+    st.selectbox("Area number", options=numbers, key="area_number")
 
-    area_number = st.selectbox(
-        "Area number",
-        options=numbers,
-        index=default_number,
+    st.caption("Or click an area in the map on the Home page.")
+
+    st.subheader("Period")
+
+    # The reservoir pages download only the years chosen here.
+    years = st.slider(
+        "Years",
+        min_value=FIRST_YEAR,
+        max_value=THIS_YEAR,
+        value=(THIS_YEAR - 5, THIS_YEAR),
+        key="years",
     )
 
-    last_year = pd.Timestamp.now().year
-
-    start_year, end_year = st.select_slider(
-        "Download interval",
-        options=list(range(FIRST_YEAR, last_year + 1)),
-        value=(last_year - 14, last_year),
-        help="Which years of reservoir statistics to download. The weather "
-        "data has its own period, set on the weather page.",
-    )
-
-    st.caption(f"Selected: {area_type} {area_number}, {start_year} to {end_year}")
-
-# The pages read the choices from here instead of taking them as arguments,
-# since st.Page runs a file rather than calling a function.
-st.session_state["area_type"] = area_type
-st.session_state["area_number"] = area_number
-st.session_state["start_year"] = start_year
-st.session_state["end_year"] = end_year
-
-# --- Pages ----------------------------------------------------------------
-
-# st.Page links a .py file to a title and an icon in the sidebar menu.
-home = st.Page("views/home.py", title="Home", icon=":material/home:", default=True)
-
-reservoirs = st.Page(
-    "views/reservoirs.py", title="Reservoir levels", icon=":material/water_drop:"
+# One string, since that is how the data is labelled: "EL 3".
+st.session_state["area"] = (
+    f"{st.session_state['area_type']} {st.session_state['area_number']}"
 )
-cycles = st.Page(
-    "views/cycles.py", title="Reservoir cycles", icon=":material/show_chart:"
-)
-weather = st.Page(
-    "views/weather.py", title="Weather quality", icon=":material/rainy:"
-)
-crossborder = st.Page(
-    "views/crossborder.py", title="Cross-border flow", icon=":material/bolt:"
-)
+
+st.session_state["start_year"] = years[0]
+st.session_state["end_year"] = years[1]
+
+# --- Pages ---------------------------------------------------------------
+
+home = st.Page("views/home.py", title="Home", icon=":material/home:",
+               default=True)
+
+overview = st.Page("views/overview.py", title="Overview",
+                   icon=":material/table_chart:")
+cycles = st.Page("views/cycles.py", title="Cycles",
+                 icon=":material/show_chart:")
+
+anomalies = st.Page("views/weather.py", title="Outliers and anomalies",
+                    icon=":material/rainy:")
+
+crossborder = st.Page("views/crossborder.py", title="Power exchange",
+                      icon=":material/bolt:")
+
 about = st.Page("views/about.py", title="About", icon=":material/info:")
 
-# The grouping follows the subject rather than the order the pages were made
-# in. The two reservoir pages belong together, the weather describes the same
-# areas, and the power flow is a separate subject.
-nav = st.navigation(
+forecast = st.Page("views/forecast.py", title="Forecast",
+                   icon=":material/trending_up:")
+
+correlation = st.Page("views/correlation.py", title="Weather vs reservoirs",
+                      icon=":material/compare_arrows:")
+
+page = st.navigation(
     {
         "Start": [home],
-        "Reservoirs": [reservoirs, cycles],
-        "Weather": [weather],
-        "Power flow": [crossborder],
-        "Info": [about],
+        "Reservoirs": [overview, cycles, forecast],
+        "Weather": [anomalies, correlation],
+        "Electricity": [crossborder],
+        "Utilities": [about],
     }
 )
 
-nav.run()
+# The open page decides the colours on headings, buttons and plots.
+page_style(page.title)
+
+# One place to catch a source that is down, instead of one per page.
+try:
+    page.run()
+except DataSourceError as error:
+    st.error(str(error))
+    st.info(
+        "This page needs a source that is not answering right now. Try again "
+        "in a moment, or open a page that uses another source. Anything "
+        "already cached still works."
+    )

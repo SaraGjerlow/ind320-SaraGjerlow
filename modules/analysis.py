@@ -4,9 +4,10 @@ The notebook versions print their numbers. These return them instead, so the
 app can show them with st.metric and the page decides how they look.
 """
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from scipy.fft import dct, idct
 from scipy.signal import spectrogram
 from sklearn.neighbors import LocalOutlierFactor
@@ -15,9 +16,20 @@ from statsmodels.tsa.seasonal import STL
 # The reservoir statistics are weekly, so one full year is 52 points.
 WEEKS_PER_YEAR = 52
 
+# The same colours as in modules/theme.py, repeated so this file imports nothing.
+BLUE = "#3F72AF"
+PINK = "#C45B8B"
+TURQUOISE = "#3E9AA3"
+PURPLE = "#8663B0"
+GREY = "#9A93A8"
+# Warm colour for the points that are flagged, so they stand out on any page.
+FLAG = "#E07A5F"
+# The pastel colours from modules/theme.py, for plots that draw several lines.
+PALETTE = [PINK, BLUE, TURQUOISE, PURPLE, "#7FAFD6", "#E2A3C0"]
+
 
 def precipitation_outliers(weather, cutoff=25, n_sigma=3.0,
-                           column="precipitation"):
+                           column="precipitation", colour=BLUE):
     """Plot precipitation with SPC limits and mark the outliers.
 
     cutoff is how many low DCT frequencies count as seasonal. A low number
@@ -53,23 +65,32 @@ def precipitation_outliers(weather, cutoff=25, n_sigma=3.0,
     upper = seasonal + median + distance
     lower = seasonal + median - distance
 
-    figure, axes = plt.subplots(figsize=(11, 4.5))
-    axes.plot(series.index, values, linewidth=0.6, color="steelblue",
-              label="Average precipitation")
-    axes.plot(series.index, upper, linewidth=1.0, color="grey",
-              label=f"SPC limits ({n_sigma} sigma)")
-    axes.plot(series.index, lower, linewidth=1.0, color="grey")
-    axes.scatter(series.index[is_outlier], values[is_outlier],
-                 s=14, color="crimson", zorder=3, label="Outliers")
+    figure = go.Figure()
 
-    axes.set_title(f"Precipitation with SPC limits "
-                   f"(cutoff {cutoff}, {n_sigma} sigma)")
-    axes.set_xlabel("Time")
-    axes.set_ylabel("Precipitation (mm)")
-    axes.grid(alpha=0.3)
-    axes.legend(fontsize=8)
-    figure.autofmt_xdate()
-    figure.tight_layout()
+    figure.add_trace(go.Scatter(
+        x=series.index, y=values, name=f"Average {column}",
+        line=dict(color=BLUE, width=1.0),
+    ))
+    figure.add_trace(go.Scatter(
+        x=series.index, y=upper, name=f"SPC limits ({n_sigma} sigma)",
+        line=dict(color=GREY, width=1.2),
+    ))
+    figure.add_trace(go.Scatter(
+        x=series.index, y=lower, name="Lower limit",
+        line=dict(color=GREY, width=1.2), showlegend=False,
+    ))
+    figure.add_trace(go.Scatter(
+        x=series.index[is_outlier], y=values[is_outlier], name="Outliers",
+        mode="markers", marker=dict(color=PINK, size=5),
+    ))
+
+    figure.update_layout(
+        title=f"{column} with SPC limits (cutoff {cutoff}, {n_sigma} sigma)",
+        xaxis_title="Time",
+        yaxis_title=column,
+        height=460,
+        hovermode="x unified",
+    )
 
     outliers = pd.DataFrame({
         "time": series.index[is_outlier],
@@ -87,8 +108,8 @@ def precipitation_outliers(weather, cutoff=25, n_sigma=3.0,
 
 
 def temperature_anomalies(weather, proportion=0.01, n_neighbors=20,
-                          column="temperature_2m"):
-    """Plot temperature and mark anomalies found by Local Outlier Factor.
+                          column="temperature_2m", colour=BLUE):
+    """Plot a weather variable and mark anomalies found by Local Outlier Factor.
 
     proportion is the share of points that should be flagged, so 0.01 marks
     the one percent that look most out of place.
@@ -102,7 +123,7 @@ def temperature_anomalies(weather, proportion=0.01, n_neighbors=20,
     values = series.to_numpy()
 
     # Time has to be a number for the distance calculation. Both features are
-    # scaled, or the hour count would completely dominate the temperature.
+    # scaled, or the hour count would completely dominate the measurement.
     hours = np.arange(len(values), dtype=float)
     features = np.column_stack([
         (hours - hours.mean()) / hours.std(),
@@ -119,20 +140,25 @@ def temperature_anomalies(weather, proportion=0.01, n_neighbors=20,
     is_anomaly = labels == -1
     score = -detector.negative_outlier_factor_
 
-    figure, axes = plt.subplots(figsize=(11, 4.5))
-    axes.plot(series.index, values, linewidth=0.6, color="steelblue",
-              label="Average temperature")
-    axes.scatter(series.index[is_anomaly], values[is_anomaly],
-                 s=14, color="crimson", zorder=3, label="Anomalies")
+    figure = go.Figure()
 
-    axes.set_title(f"Temperature with LOF anomalies "
-                   f"({100 * proportion:.1f} percent flagged)")
-    axes.set_xlabel("Time")
-    axes.set_ylabel("Temperature (degrees C)")
-    axes.grid(alpha=0.3)
-    axes.legend(fontsize=8)
-    figure.autofmt_xdate()
-    figure.tight_layout()
+    figure.add_trace(go.Scatter(
+        x=series.index, y=values, name=f"Average {column}",
+        line=dict(color=BLUE, width=1.0),
+    ))
+    figure.add_trace(go.Scatter(
+        x=series.index[is_anomaly], y=values[is_anomaly], name="Anomalies",
+        mode="markers", marker=dict(color=PINK, size=5),
+    ))
+
+    figure.update_layout(
+        title=f"{column} with LOF anomalies "
+              f"({100 * proportion:.1f} percent flagged)",
+        xaxis_title="Time",
+        yaxis_title=column,
+        height=460,
+        hovermode="x unified",
+    )
 
     anomalies = pd.DataFrame({
         "time": series.index[is_anomaly],
@@ -150,6 +176,25 @@ def temperature_anomalies(weather, proportion=0.01, n_neighbors=20,
 
     return figure, anomalies, statistics
 
+def shades(colour, count):
+    """Make count colours out of one, from the colour itself to a pale tint."""
+    red = int(colour[1:3], 16)
+    green = int(colour[3:5], 16)
+    blue = int(colour[5:7], 16)
+
+    result = []
+    step = 0
+    while step < count:
+        # Each step mixes a little more white into the original colour.
+        mix = 0.5 * step / max(count - 1, 1)
+        result.append("#{:02X}{:02X}{:02X}".format(
+            round(red + (255 - red) * mix),
+            round(green + (255 - green) * mix),
+            round(blue + (255 - blue) * mix),
+        ))
+        step += 1
+
+    return result
 
 def reservoir_series(reservoirs, area_type, area_number,
                      column="Fill level (fraction)"):
@@ -179,27 +224,36 @@ def reservoir_cycles(series, seasonal_smoother=13, trend_smoother=105,
     result = STL(series, period=WEEKS_PER_YEAR, seasonal=seasonal_smoother,
                  trend=trend_smoother, robust=robust).fit()
 
-    figure, axes = plt.subplots(4, 1, figsize=(11, 8), sharex=True)
+    # One row per part, drawn above each other on a shared date axis.
+    names = ["Observed", "Trend", "Seasonal", "Remainder"]
+    parts_to_plot = [series.to_numpy(), result.trend, result.seasonal,
+                     result.resid]
+    colours = PALETTE
+    widths = [1.0, 1.4, 1.0, 0.8]
 
-    axes[0].plot(series.index, series.to_numpy(), linewidth=0.8,
-                 color="steelblue")
-    axes[0].set_ylabel("Observed")
+    figure = make_subplots(rows=4, cols=1, shared_xaxes=True,
+                           vertical_spacing=0.04)
 
-    axes[1].plot(series.index, result.trend, linewidth=1.0, color="darkorange")
-    axes[1].set_ylabel("Trend")
+    position = 1
+    for name in names:
+        figure.add_trace(
+            go.Scatter(
+                x=series.index,
+                y=parts_to_plot[position - 1],
+                name=name,
+                line=dict(color=colours[position - 1],
+                          width=widths[position - 1]),
+                showlegend=False,
+            ),
+            row=position, col=1,
+        )
+        figure.update_yaxes(title_text=name, title_font_size=11,
+                            row=position, col=1)
+        position += 1
 
-    axes[2].plot(series.index, result.seasonal, linewidth=0.8, color="seagreen")
-    axes[2].set_ylabel("Seasonal")
-
-    axes[3].plot(series.index, result.resid, linewidth=0.6, color="grey")
-    axes[3].set_ylabel("Remainder")
-    axes[3].set_xlabel("Date")
-
-    for one_axis in axes:
-        one_axis.grid(alpha=0.3)
-
-    figure.autofmt_xdate()
-    figure.tight_layout()
+    figure.update_xaxes(title_text="Date", row=4, col=1)
+    figure.update_layout(height=820, hovermode="x unified",
+                         margin=dict(l=70, r=20, t=40, b=50))
 
     parts = pd.DataFrame({
         "trend": result.trend,
@@ -220,7 +274,8 @@ def reservoir_cycles(series, seasonal_smoother=13, trend_smoother=105,
     return figure, parts, statistics
 
 
-def reservoir_spectrogram(series, window_weeks=208, overlap_weeks=156):
+def reservoir_spectrogram(series, window_weeks=208, overlap_weeks=156,
+                          colour=BLUE):
     """Show how the cycles in one area's reservoir filling change over time.
 
     window_weeks is the length of each slice and overlap_weeks is how much two
@@ -246,23 +301,32 @@ def reservoir_spectrogram(series, window_weeks=208, overlap_weeks=156):
     # scipy counts the window centres in samples, so one sample is seven days.
     times = series.index[0] + pd.to_timedelta(window_centres * 7, unit="D")
 
-    figure, axes = plt.subplots(figsize=(11, 4.5))
-
     # Power is drawn in decibels, because the yearly cycle is so much stronger
     # than everything else that a linear scale would show one line only.
-    mesh = axes.pcolormesh(times, periods, 10 * np.log10(power),
-                           shading="auto", cmap="magma")
+    decibels = 10 * np.log10(power)
 
-    axes.set_yscale("log")
-    axes.set_yticks([8, 13, 26, 52, 104, 208])
-    axes.set_yticklabels(["8", "13", "26", "52", "104", "208"])
-    axes.set_ylabel("Period (weeks)")
-    axes.set_xlabel("Date")
-    axes.set_title(f"Spectrogram (window {window_weeks} weeks, "
-                   f"overlap {overlap_weeks})")
-    figure.colorbar(mesh, ax=axes, label="Power (dB)")
-    figure.autofmt_xdate()
-    figure.tight_layout()
+    figure = go.Figure(go.Heatmap(
+        x=times, y=periods, z=decibels,
+        colorscale=[[0.0, "#FFFFFF"], [1.0, colour]],
+        colorbar=dict(title="Power (dB)"),
+        hovertemplate="%{x|%d %b %Y}<br>%{y:.0f} weeks<br>%{z:.1f} dB"
+                      "<extra></extra>",
+    ))
+
+    # A log scale, so the short periods are not squeezed into one stripe.
+    figure.update_yaxes(
+        type="log",
+        tickvals=[8, 13, 26, 52, 104, 208],
+        ticktext=["8", "13", "26", "52", "104", "208"],
+        title_text="Period (weeks)",
+    )
+
+    figure.update_layout(
+        title=f"Spectrogram (window {window_weeks} weeks, "
+              f"overlap {overlap_weeks})",
+        xaxis_title="Date",
+        height=460,
+    )
 
     # The bin closest to one year, so its strength can be followed separately.
     yearly_bin = int(np.argmin(np.abs(periods - WEEKS_PER_YEAR)))
