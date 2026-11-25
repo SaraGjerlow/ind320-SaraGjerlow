@@ -5,7 +5,7 @@ import plotly.express as px
 import streamlit as st
 
 from modules.data import load_all_reservoirs, load_daily_weather, load_geojson
-from modules.theme import ACCENT, INK, SEQUENTIAL
+from modules.theme import ACCENT, INK, NAV_COLOURS, SEQUENTIAL, tint
 
 st.title("Norwegian hydropower")
 
@@ -192,3 +192,100 @@ else:
         )
 
 st.caption("Area borders from NVE, converted to GeoJSON in the part 4 notebook.")
+
+# --- Where to go next ----------------------------------------------------
+
+st.subheader("Where to go next")
+
+st.write(
+    f"Every page below follows the area selected above, which is **{area}** "
+    f"right now."
+)
+
+# Weather is only stored for the EL areas, and the hourly weather that the
+# anomalies page needs only for EL 3. Said here as well as in the sidebar, so
+# the limit is visible before a page turns out to be empty.
+if area_type != "EL":
+    st.warning(
+        f"{area} has no weather stored, so the two Weather pages below will "
+        f"be empty for it. The reservoir pages work for every area."
+    )
+elif area != "EL 3":
+    st.info(
+        f"{area} has daily weather, so Weather vs reservoirs works. "
+        f"Outliers and anomalies needs hourly weather, which is stored "
+        f"for EL 3 only. That page will offer to download it for {area}."
+    )
+
+# The three menu groups, with the same colours as the sidebar headings. The
+# key is what the CSS below uses to find each box again.
+GROUPS = [
+    {
+        "key": "card_reservoirs",
+        "title": "Reservoirs",
+        "colour": NAV_COLOURS[1],
+        "text": "How full the magazines are, their yearly cycle, and a "
+                "forecast of the weeks ahead.",
+        "pages": [
+            ("views/overview.py", "Overview", ":material/table_chart:"),
+            ("views/cycles.py", "Cycles", ":material/show_chart:"),
+            ("views/forecast.py", "Forecast", ":material/trending_up:"),
+        ],
+    },
+    {
+        "key": "card_weather",
+        "title": "Weather",
+        "colour": NAV_COLOURS[2],
+        "text": "Outliers and anomalies in the weather over the area, and "
+                "how the weather lines up with the reservoirs.",
+        "pages": [
+            ("views/weather.py", "Outliers and anomalies",
+             ":material/rainy:"),
+            ("views/correlation.py", "Weather vs reservoirs",
+             ":material/compare_arrows:"),
+        ],
+    },
+    {
+        "key": "card_electricity",
+        "title": "Electricity",
+        "colour": NAV_COLOURS[3],
+        "text": "Power traded across the borders, by direction and by month.",
+        "pages": [
+            ("views/crossborder.py", "Power exchange", ":material/bolt:"),
+        ],
+    },
+]
+
+# A pale wash of the group colour behind each box, and a slightly stronger
+# version of the same colour on the border.
+rules = ""
+for group in GROUPS:
+    rules += (
+        f'.st-key-{group["key"]} {{'
+        f'background: {tint(group["colour"], 0.10)};'
+        f'border-color: {tint(group["colour"], 0.35)};'
+        f'border-radius: 10px;'
+        f'}}'
+    )
+
+st.html(f"<style>{rules}</style>")
+
+columns = st.columns(3)
+
+position = 0
+for group in GROUPS:
+    # height="stretch" makes all three boxes as tall as the tallest one.
+    box = columns[position].container(
+        border=True, key=group["key"], height="stretch"
+    )
+
+    box.markdown(
+        f"<h4 style='color:{group['colour']};margin:0'>{group['title']}</h4>",
+        unsafe_allow_html=True,
+    )
+    box.caption(group["text"])
+
+    for path, label, icon in group["pages"]:
+        box.page_link(path, label=label, icon=icon)
+
+    position = position + 1

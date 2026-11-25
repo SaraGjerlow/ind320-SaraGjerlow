@@ -80,6 +80,11 @@ run before the app shows anything on the pages that depend on them.
 3. **`notebooks/part3.ipynb`** samples locations inside the NVE areas, stores
    them in the MongoDB collection `area_points`, downloads weather from
    open-meteo for those locations and runs the four analyses.
+4. **`notebooks/part4.ipynb`** downloads daily weather for the EL areas into
+   the MongoDB collection `area_weather_daily`, converts the shapefiles to the
+   GeoJSON files in `geojson/`, and holds the forecasting, the sliding window
+   correlation and the tests. The Home map, Weather vs reservoirs and the
+   extra variables on the Forecast page depend on it.
 
 Part 3 has to be run over more than one day if the full thousand locations per
 area are wanted. Open-meteo limits how much data can be downloaded per day,
@@ -91,8 +96,13 @@ day continues where the previous run stopped instead of starting over.
 ```
 app.py                  Entry point, defines the pages and the sidebar menu
 modules/data.py         All data loading, cached per page rerun
+modules/analysis.py     The analyses, written so the notebooks can import them
+modules/theme.py        Colours, per page and per menu group
 views/                  One file per page in the app
 notebooks/              One notebook per project part
-shapefiles/             NVE area borders, used by part 3
-requirements.txt        Packages needed by the app
+geojson/                Area borders for the map, written by part 4
+images/                 The hand drawn sketch of the app structure
+shapefiles/             NVE area borders, used by parts 3 and 4
+.streamlit/config.toml  Theme colours for Streamlit itself
+requirements.txt        Packages needed by the app, pinned
 ```

@@ -3,9 +3,8 @@
 import plotly.graph_objects as go
 import streamlit as st
 
-from modules.theme import PALETTE, page_colours
 from modules.data import load_flows
-from modules.theme import page_colours
+from modules.theme import PALETTE
 
 # Readable labels instead of the raw values stored in the database.
 DIRECTION_LABELS = {
@@ -29,7 +28,7 @@ MONTH_NAMES = [
     "December",
 ]
 
-st.title("Cross-border power flow")
+st.title("Power exchange")
 st.write(
     "Hourly cross-border flows between Norway (NO2) and four neighbouring "
     "areas. The data was collected from ENTSO-E in the notebook for part 2 "

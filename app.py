@@ -67,6 +67,14 @@ with st.sidebar:
 
     st.caption("Or click an area in the map on the Home page.")
 
+    # Says plainly which areas have weather, so an empty weather page reads as
+    # a documented limit rather than something that is broken.
+    st.caption(
+        "Daily weather covers the five EL areas. Hourly weather covers EL 3, "
+        "averaged over 1000 locations. Other areas can be downloaded on the "
+        "weather page."
+    )
+
     st.subheader("Period")
 
     # The reservoir pages download only the years chosen here.
@@ -77,6 +85,8 @@ with st.sidebar:
         value=(THIS_YEAR - 5, THIS_YEAR),
         key="years",
     )
+
+    st.caption("Used by Overview and Cycles.")
 
 # One string, since that is how the data is labelled: "EL 3".
 st.session_state["area"] = (
@@ -133,3 +143,9 @@ except DataSourceError as error:
         "in a moment, or open a page that uses another source. Anything "
         "already cached still works."
     )
+
+    # The original error is kept out of the way, so the page stays readable
+    # but the cause is still one click away when something is actually wrong.
+    if error.detail:
+        with st.expander("Technical detail"):
+            st.code(error.detail)

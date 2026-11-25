@@ -18,7 +18,16 @@ from pymongo import MongoClient
 from pymongo.errors import PyMongoError
 
 class DataSourceError(Exception):
-    """Raised when one of the outside sources cannot be reached."""
+    """Raised when one of the outside sources cannot be reached.
+
+    message is the sentence the user reads. detail is the original error from
+    requests or pymongo, kept separate so the page can hide it behind an
+    expander instead of printing a traceback at the reader.
+    """
+
+    def __init__(self, message, detail=""):
+        super().__init__(message)
+        self.detail = detail
 
 
 def fetch_json(url, source):
@@ -28,10 +37,16 @@ def fetch_json(url, source):
         response.raise_for_status()
         return response.json()
     except requests.RequestException as error:
-        raise DataSourceError(f"{source} could not be reached. {error}")
+        raise DataSourceError(
+            f"{source} could not be reached. Check that you are online, then "
+            f"try again.",
+            str(error),
+        )
     except ValueError as error:
-        raise DataSourceError(f"{source} answered with something that is "
-                              f"not data. {error}")
+        raise DataSourceError(
+            f"{source} answered with something that is not data.",
+            str(error),
+        )
 
 NVE_DATA_URL = (
     "https://biapi.nve.no/magasinstatistikk/api/Magasinstatistikk/HentOffentligData"
@@ -146,7 +161,11 @@ def get_mongo_client() -> MongoClient:
     try:
         client.admin.command("ping")
     except PyMongoError as error:
-        raise DataSourceError(f"MongoDB could not be reached. {error}")
+        raise DataSourceError(
+            "MongoDB could not be reached. Check that you are online and "
+            "that the connection string in the app secrets is right.",
+            str(error),
+        )
 
     return client
 
@@ -158,7 +177,7 @@ def fetch_documents(collection_name, query, fields):
     try:
         return list(collection.find(query, fields))
     except PyMongoError as error:
-        raise DataSourceError(f"MongoDB could not be read. {error}")
+        raise DataSourceError("MongoDB could not be read.", str(error))
 
 
 @st.cache_data(ttl=600, show_spinner="Reading the power flows")
@@ -378,7 +397,7 @@ def load_all_reservoirs() -> pd.DataFrame:
 @st.cache_data(ttl=3600, show_spinner="Reading the daily weather")
 def load_daily_weather(area_type: str, area_number: int) -> pd.DataFrame:
     """Read the long daily weather history the part 4 notebook stored."""
- 
+
     documents = fetch_documents(
         "area_weather_daily",
         {"area_type": area_type, "area_number": int(area_number)},
@@ -413,7 +432,11 @@ def load_currency(start_date: str, end_date: str,
         )
         response.raise_for_status()
     except requests.RequestException as error:
-        raise DataSourceError(f"Norges Bank could not be reached. {error}")
+        raise DataSourceError(
+            "Norges Bank could not be reached. Check that you are online, "
+            "then try again.",
+            str(error),
+        )
 
     # Norges Bank separates the columns with semicolons, not commas.
     data = pd.read_csv(StringIO(response.text), sep=";")

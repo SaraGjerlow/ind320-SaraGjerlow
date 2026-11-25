@@ -19,7 +19,7 @@ def run_lof(weather, proportion, n_neighbors, column, colour, time_feature):
     return temperature_anomalies(weather, proportion, n_neighbors, column,
                                  colour, time_feature)
 
-st.title("Weather quality")
+st.title("Outliers and anomalies")
 
 # The area comes from the sidebar, the same selector the reservoir pages use.
 # That is what ties the weather to the reservoir statistics: the locations

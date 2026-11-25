@@ -12,7 +12,7 @@ from modules.analysis import (
 from modules.data import load_reservoirs
 
 @st.cache_data(ttl=3600, show_spinner="Splitting the series")
-def run_stl(series, seasonal_smoother, trend_smoother, robust, colour):
+def run_stl(series, seasonal_smoother, trend_smoother, robust):
     """Cache one STL run, so moving a slider back and forth is instant."""
     return reservoir_cycles(series, seasonal_smoother, trend_smoother,
                             robust)
@@ -98,7 +98,7 @@ with stl_tab:
         )
 
     figure, parts, statistics = run_stl(
-        series, seasonal_smoother, trend_smoother, robust, PAGE
+        series, seasonal_smoother, trend_smoother, robust
     )
 
     st.plotly_chart(figure, width="stretch")
