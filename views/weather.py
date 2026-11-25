@@ -14,10 +14,10 @@ def run_spc(weather, cutoff, n_sigma, column, colour):
 
 
 @st.cache_data(ttl=3600, show_spinner="Looking for anomalies")
-def run_lof(weather, proportion, n_neighbors, column, colour):
+def run_lof(weather, proportion, n_neighbors, column, colour, time_feature):
     """Cache one LOF run. This is the slowest analysis in the app."""
     return temperature_anomalies(weather, proportion, n_neighbors, column,
-                                 colour)
+                                 colour, time_feature)
 
 st.title("Weather quality")
 
@@ -143,6 +143,14 @@ with spc_tab:
         "the original curve, so they follow the season instead of being two "
         "straight lines."
     )
+    st.caption(
+        "The textbook SPC limit is three sigma, but that assumes values "
+        "spread symmetrically around the level. Hourly precipitation is not, "
+        "so three sigma flags around seven percent of the hours, which is far "
+        "too many to call outliers. Four sigma is the starting point here, "
+        "and the slider goes down to one if you want to see the conventional "
+        "limit."
+    )
 
     left, middle, right = st.columns(3)
 
@@ -150,6 +158,7 @@ with spc_tab:
         spc_name = st.selectbox(
             "Weather variable",
             options=list(WEATHER_VARIABLES),
+            index=1,
             key="spc_variable",
             help="The same method is used for every variable.",
         )
@@ -165,7 +174,7 @@ with spc_tab:
     with right:
         n_sigma = st.slider(
             "Limit (sigma)",
-            min_value=1.0, max_value=8.0, value=3.0, step=0.5,
+            min_value=1.0, max_value=8.0, value=4.0, step=0.5,
             help="How far from the seasonal level a point has to be before it "
             "counts as an outlier.",
         )
@@ -208,6 +217,24 @@ with lof_tab:
         "the year."
     )
 
+    # The time feature is the one choice that changes what a neighbour is,
+    # so it sits above the other three controls.
+    time_feature = st.radio(
+        "Time feature",
+        options=["Day of year", "Hour index"],
+        horizontal=True,
+        key="lof_time",
+        help="What an hour is compared against.",
+    )
+
+    st.caption(
+        "Day of year is written as a sine and a cosine, so the end of "
+        "December sits next to the start of January instead of a whole year "
+        "away. An hour is then compared against the same time of year in "
+        "every year. The hour index is only a counter, so with that choice "
+        "the neighbours are always the hours closest in time."
+    )
+
     left, middle, right = st.columns(3)
 
     with left:
@@ -239,7 +266,7 @@ with lof_tab:
     lof_column = WEATHER_VARIABLES[lof_name]
 
     figure, anomalies, statistics = run_lof(
-        weather, proportion, n_neighbors, lof_column, PAGE
+        weather, proportion, n_neighbors, lof_column, PAGE, time_feature
     )
 
     st.plotly_chart(figure, width="stretch")

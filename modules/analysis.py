@@ -108,7 +108,8 @@ def precipitation_outliers(weather, cutoff=25, n_sigma=3.0,
 
 
 def temperature_anomalies(weather, proportion=0.01, n_neighbors=20,
-                          column="temperature_2m", colour=BLUE):
+                          column="temperature_2m", colour=BLUE,
+                          time_feature="Day of year"):
     """Plot a weather variable and mark anomalies found by Local Outlier Factor.
 
     proportion is the share of points that should be flagged, so 0.01 marks
@@ -117,18 +118,33 @@ def temperature_anomalies(weather, proportion=0.01, n_neighbors=20,
     n_neighbors is how many nearby points each point is compared against. A
     small number reacts to short events, a large one only to longer ones.
 
+    time_feature decides what the neighbours are. "Day of year" compares a
+    point against the same time of year in every year, "Hour index" against
+    the hours right before and after it.
+
     Returns the figure, a table of the anomalies and a dictionary of numbers.
     """
     series = weather.set_index("time")[column]
     values = series.to_numpy()
 
-    # Time has to be a number for the distance calculation. Both features are
-    # scaled, or the hour count would completely dominate the measurement.
-    hours = np.arange(len(values), dtype=float)
-    features = np.column_stack([
-        (hours - hours.mean()) / hours.std(),
-        (values - values.mean()) / values.std(),
-    ])
+    # The value is scaled, so no feature dominates the distance calculation.
+    scaled = (values - values.mean()) / values.std()
+
+    if time_feature == "Day of year":
+        # Written as a sine and a cosine, so the last day of December lies
+        # next to the first day of January instead of a whole year away.
+        day = series.index.dayofyear.to_numpy(dtype=float)
+        angle = 2 * np.pi * day / 365.25
+
+        # Both already lie between -1 and 1, close to the scaled values.
+        features = np.column_stack([np.sin(angle), np.cos(angle), scaled])
+    else:
+        # The plain hour count, scaled the same way as the values.
+        hours = np.arange(len(values), dtype=float)
+        features = np.column_stack([
+            (hours - hours.mean()) / hours.std(),
+            scaled,
+        ])
 
     detector = LocalOutlierFactor(
         n_neighbors=n_neighbors, contamination=proportion
@@ -153,7 +169,8 @@ def temperature_anomalies(weather, proportion=0.01, n_neighbors=20,
 
     figure.update_layout(
         title=f"{column} with LOF anomalies "
-              f"({100 * proportion:.1f} percent flagged)",
+              f"({100 * proportion:.1f} percent flagged, "
+              f"time as {time_feature.lower()})",
         xaxis_title="Time",
         yaxis_title=column,
         height=460,

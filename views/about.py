@@ -4,7 +4,7 @@ import streamlit as st
 
 st.title("About")
 
-st.write("IND320 Data to Decision, project work part 3.")
+st.write("IND320 Data to Decision, project work part 4.")
 
 st.subheader("Data sources")
 st.markdown(
@@ -14,9 +14,12 @@ st.markdown(
     "- [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/), "
     "hourly cross-border power flow\n"
     "- [open-meteo Archive API](https://open-meteo.com/en/docs/historical-weather-api), "
-    "hourly historical weather from the ERA5 reanalysis model\n"
+    "hourly and daily historical weather from the ERA5 reanalysis model\n"
+    "- [Norges Bank](https://www.norges-bank.no/tema/Statistikk/Valutakurser/), "
+    "daily EUR and USD exchange rates\n"
     "- NVE's shapefiles for the electricity price areas and the watercourse "
-    "regions, used to draw the sampling locations"
+    "regions, used both to draw the sampling locations and, converted to "
+    "GeoJSON, to draw the map on the Home page"
 )
 
 st.subheader("How the data reaches this app")
@@ -35,8 +38,14 @@ st.write(
     "shapefile, and it does not spend the daily open-meteo limit on every "
     "rerun."
 )
+st.write(
+    "The exchange rates are read straight from Norges Bank when the Forecast "
+    "page needs them, and the area borders are read from the GeoJSON files the "
+    "part 4 notebook writes into the repository."
+)
 
 st.subheader("Links")
 st.markdown(
-    "- [GitHub repository](https://github.com/SaraGjerlow/ind320-SaraGjerlow)"
+    "- [GitHub repository](https://github.com/SaraGjerlow/ind320-SaraGjerlow)\n"
+    "- [Streamlit app](https://ind320-saragjerlow.streamlit.app)"
 )
