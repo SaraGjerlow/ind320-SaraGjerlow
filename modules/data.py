@@ -96,7 +96,7 @@ HOURLY_VARIABLES = [
 LOCATIONS_PER_REQUEST = 25
 
 
-@st.cache_data(show_spinner="Downloading the reservoir statistics")
+@st.cache_data(ttl=3600, show_spinner="Downloading the reservoir statistics")
 def load_reservoirs(start_year: int, end_year: int) -> pd.DataFrame:
     """Download the reservoir statistics for the chosen interval of years.
 
