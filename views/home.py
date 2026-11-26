@@ -97,12 +97,23 @@ def reservoir_values(area_type, week_end):
 
 
 def weather_values(area_type, numbers, column, week_end):
-    """One weather value per area, over the seven days ending on week_end."""
+    """One weather value per area, over the seven days ending on week_end.
+
+    Also returns the last day any area has weather for, so an empty result can
+    say whether the weather is missing or only ends earlier than the week.
+    """
     rows = []
+    last_day = None
+
     for number in numbers:
         daily = load_daily_weather(area_type, number)
         if len(daily) == 0:
             continue
+
+        # The newest day across the areas, used by the message below.
+        newest = daily["time"].max()
+        if last_day is None or newest > last_day:
+            last_day = newest
 
         window = daily[
             (daily["time"] > week_end - pd.Timedelta(days=7))
@@ -119,21 +130,32 @@ def weather_values(area_type, numbers, column, week_end):
 
         rows.append({"area": f"{area_type} {number}", "value": value})
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows), last_day
 
 
 borders = load_geojson(area_type)
 numbers = [feature["properties"]["area_number"] for feature in borders["features"]]
 
+# Only the weather branch reports a last day, so this starts empty.
+last_day = None
+
 if source == "reservoir":
     values = reservoir_values(area_type, pd.Timestamp(week))
 else:
-    values = weather_values(area_type, numbers, column, pd.Timestamp(week))
+    values, last_day = weather_values(area_type, numbers, column,
+                                      pd.Timestamp(week))
 
-if len(values) == 0:
+if len(values) == 0 and last_day is None:
     st.info(
-        f"No {colour_name.lower()} stored for the {area_type} areas yet. "
-        "Run the part 4 notebook for these areas, or colour by fill level."
+        f"No weather stored for the {area_type} areas yet. Run the part 4 "
+        f"notebook for these areas, or colour by fill level."
+    )
+elif len(values) == 0:
+    st.info(
+        f"The weather for the {area_type} areas ends on "
+        f"{last_day:%d %B %Y}, and ERA5 always lags a few days behind NVE. "
+        f"Drag the week back to {last_day:%d %B %Y} or earlier, or colour by "
+        f"fill level."
     )
 else:
     figure = px.choropleth_map(

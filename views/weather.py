@@ -146,7 +146,8 @@ with spc_tab:
     st.caption(
         "The textbook SPC limit is three sigma, but that assumes values "
         "spread symmetrically around the level. Hourly precipitation is not, "
-        "so three sigma flags around seven percent of the hours, which is far "
+        "so on precipitation three sigma flags around seven percent of the "
+        "hours, which is far "
         "too many to call outliers. Four sigma is the starting point here, "
         "and the slider goes down to one if you want to see the conventional "
         "limit."
